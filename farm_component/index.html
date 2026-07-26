@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  body { margin: 0; overflow: hidden; font-family: sans-serif; background-color: #f0f2f6; }
+  canvas { display: block; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin: 0 auto; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  /* A small overlay to tell the user to click to focus */
+  #focusOverlay { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.6); color: white; padding: 5px 15px; border-radius: 20px; font-size: 14px; pointer-events: none; opacity: 1; transition: opacity 0.5s; }
+</style>
+</head>
+<body>
+<div id="focusOverlay">Click here to enable WASD / Arrow Keys</div>
+<canvas id="farmCanvas" width="800" height="500" tabindex="0"></canvas>
+<script>
+  // --- Streamlit Component Boilerplate ---
+  function sendMessageToStreamlitClient(type, data) {
+    var outData = Object.assign({
+      isStreamlitMessage: true,
+      type: type,
+    }, data);
+    window.parent.postMessage(outData, "*");
+  }
+
+  function init() {
+      sendMessageToStreamlitClient("streamlit:componentReady", {apiVersion: 1});
+  }
+
+  function setComponentValue(value) {
+    sendMessageToStreamlitClient("streamlit:setComponentValue", {value: value});
+  }
+  
+  function setFrameHeight(height) {
+    sendMessageToStreamlitClient("streamlit:setFrameHeight", {height: height});
+  }
+
+  window.addEventListener("message", function(event) {
+    if (event.data.type === "streamlit:render") {
+      setFrameHeight(520);
+    }
+  });
+
+  // --- Audio System ---
+  let audioCtx = null;
+  function initAudio() {
+      if (!audioCtx) {
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+  }
+
+  let lastBuzzerTime = 0;
+  function playBuzzer(timestamp) {
+      if (timestamp - lastBuzzerTime < 500) return; // Debounce buzzer
+      lastBuzzerTime = timestamp;
+      
+      if (!audioCtx) return; // Will initialize on first click
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+      
+      oscillator.type = 'sawtooth';
+      oscillator.frequency.setValueAtTime(100, audioCtx.currentTime); // Harsh low freq buzzer
+      
+      gainNode.gain.setValueAtTime(0.3, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.3);
+  }
+
+  // --- Keyboard Input ---
+  let keys = { ArrowUp: false, ArrowDown: false, ArrowLeft: false, ArrowRight: false, w: false, a: false, s: false, d: false };
+  
+  window.addEventListener('keydown', e => {
+      let key = e.key;
+      if (keys.hasOwnProperty(key)) keys[key] = true;
+      if (keys.hasOwnProperty(key.toLowerCase())) keys[key.toLowerCase()] = true;
+      initAudio(); // Initialize audio on key press too
+      
+      // Hide the focus overlay when keys are used
+      document.getElementById("focusOverlay").style.opacity = "0";
+  });
+  
+  window.addEventListener('keyup', e => {
+      let key = e.key;
+      if (keys.hasOwnProperty(key)) keys[key] = false;
+      if (keys.hasOwnProperty(key.toLowerCase())) keys[key.toLowerCase()] = false;
+  });
+
+  // --- Game Physics and Rendering ---
+  const canvas = document.getElementById("farmCanvas");
+  const ctx = canvas.getContext("2d");
+  
+  // Hide focus overlay on click
+  canvas.addEventListener('mousedown', () => {
+      canvas.focus();
+      document.getElementById("focusOverlay").style.opacity = "0";
+  });
+
+  const FENCE_X = 200;
+  const FENCE_Y = 100;
+  const FENCE_W = 400;
+  const FENCE_H = 300;
+
+  function intersectsFence(x, y, radius) {
+      let left = x - radius;
+      let right = x + radius;
+      let top = y - radius;
+      let bottom = y + radius;
+      return (right > FENCE_X && left < FENCE_X + FENCE_W && bottom > FENCE_Y && top < FENCE_Y + FENCE_H);
+  }
+
+  class Animal {
+    constructor(isPlayer = false) {
+      this.isPlayer = isPlayer;
+      
+      if (Math.random() > 0.5) {
+        this.x = Math.random() > 0.5 ? Math.random() * (FENCE_X - 50) : FENCE_X + FENCE_W + 50 + Math.random() * 100;
+        this.y = Math.random() * canvas.height;
+      } else {
+        this.x = Math.random() * canvas.width;
+        this.y = Math.random() > 0.5 ? Math.random() * (FENCE_Y - 50) : FENCE_Y + FENCE_H + 50 + Math.random() * 50;
+      }
+      
+      this.radius = 18;
+      
+      if (this.isPlayer) {
+          this.emoji = "🐕"; // Farm dog is player-controlled
+          this.baseSpeed = 3.5; // Faster manual speed
+      } else {
+          this.emoji = Math.random() > 0.5 ? "🐄" : "🐑";
+          this.baseSpeed = 0.2 + Math.random() * 0.4;
+      }
+      
+      this.state = "grazing";
+      this.timer = Math.floor(60 + Math.random() * 120);
+      this.angle = Math.random() * Math.PI * 2;
+      this.vx = 0;
+      this.vy = 0;
+      
+      this.isDragging = false;
+      this.isColliding = false;
+    }
+
+    move(timestamp) {
+      if (this.isDragging) return; // Skip physics if being dragged
+
+      if (this.isPlayer) {
+          // Keyboard control logic
+          this.vx = 0;
+          this.vy = 0;
+          if (keys.ArrowUp || keys.w) this.vy = -this.baseSpeed;
+          if (keys.ArrowDown || keys.s) this.vy = this.baseSpeed;
+          if (keys.ArrowLeft || keys.a) this.vx = -this.baseSpeed;
+          if (keys.ArrowRight || keys.d) this.vx = this.baseSpeed;
+          
+          // Normalize diagonal speed
+          if (this.vx !== 0 && this.vy !== 0) {
+              this.vx *= 0.7071;
+              this.vy *= 0.7071;
+          }
+      } else {
+          // Autonomous roaming logic
+          this.timer--;
+          if (this.timer <= 0) {
+            if (this.state === "grazing") {
+                this.state = "walking";
+                this.timer = Math.floor(120 + Math.random() * 300); // Walk for 2-5 seconds
+                this.angle += (Math.random() - 0.5) * Math.PI; 
+                this.vx = Math.cos(this.angle) * this.baseSpeed;
+                this.vy = Math.sin(this.angle) * this.baseSpeed;
+            } else {
+                this.state = "grazing";
+                this.timer = Math.floor(180 + Math.random() * 300); // Graze for 3-5 seconds
+                this.vx = 0;
+                this.vy = 0;
+            }
+          }
+          
+          if (this.state === "walking") {
+              this.angle += (Math.random() - 0.5) * 0.05; // Gentle meandering
+              this.vx = Math.cos(this.angle) * this.baseSpeed;
+              this.vy = Math.sin(this.angle) * this.baseSpeed;
+          }
+      }
+
+      let newX = this.x + this.vx;
+      let newY = this.y + this.vy;
+
+      // Screen edge bounce
+      if (newX < this.radius || newX > canvas.width - this.radius) {
+          if (!this.isPlayer) {
+              this.vx *= -1;
+              this.angle = Math.atan2(this.vy, this.vx);
+          }
+          newX = this.x; // Block player at screen edge
+      }
+      if (newY < this.radius || newY > canvas.height - this.radius) {
+          if (!this.isPlayer) {
+              this.vy *= -1;
+              this.angle = Math.atan2(this.vy, this.vx);
+          }
+          newY = this.y;
+      }
+      
+      // Rigid Fence Barrier
+      if (intersectsFence(newX, newY, this.radius)) {
+          this.isColliding = true;
+          if (!this.isPlayer) {
+              this.vx *= -1; // Bounce back
+              this.vy *= -1;
+              this.angle = Math.atan2(this.vy, this.vx);
+          }
+          playBuzzer(timestamp);
+      } else {
+          this.x = newX;
+          this.y = newY;
+          this.isColliding = false;
+      }
+      
+      this.x = Math.max(this.radius, Math.min(this.x, canvas.width - this.radius));
+      this.y = Math.max(this.radius, Math.min(this.y, canvas.height - this.radius));
+    }
+  }
+
+  let animals = [];
+  animals.push(new Animal(true)); // Add the player-controlled dog first
+  for (let i=0; i<7; i++) animals.push(new Animal(false));
+
+  // --- Input Handling ---
+  let draggingAnimal = null;
+  canvas.addEventListener('mousedown', e => {
+      initAudio(); // Required to unlock Web Audio API on modern browsers
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      
+      for (let a of animals) {
+          if (Math.hypot(a.x - mx, a.y - my) < a.radius * 1.5) {
+              draggingAnimal = a;
+              a.isDragging = true;
+              break;
+          }
+      }
+  });
+
+  canvas.addEventListener('mouseup', e => {
+      if (draggingAnimal) {
+          draggingAnimal.isDragging = false;
+          draggingAnimal.isColliding = false;
+          draggingAnimal = null;
+      }
+  });
+
+  canvas.addEventListener('mouseleave', e => {
+      if (draggingAnimal) {
+          draggingAnimal.isDragging = false;
+          draggingAnimal.isColliding = false;
+          draggingAnimal = null;
+      }
+  });
+
+  canvas.addEventListener('mousemove', e => {
+      if (draggingAnimal) {
+          const rect = canvas.getBoundingClientRect();
+          let targetX = e.clientX - rect.left;
+          let targetY = e.clientY - rect.top;
+          
+          if (intersectsFence(targetX, targetY, draggingAnimal.radius)) {
+              draggingAnimal.isColliding = true;
+              playBuzzer(performance.now());
+          } else {
+              draggingAnimal.x = targetX;
+              draggingAnimal.y = targetY;
+              draggingAnimal.isColliding = false;
+          }
+      }
+  });
+
+  // --- Main Loop ---
+  let lastReportTime = 0;
+  let lastReportedStatus = null;
+
+  function loop(timestamp) {
+    let intrusion = false;
+    for (let a of animals) {
+      a.move(timestamp);
+      if (a.isColliding) intrusion = true;
+    }
+
+    let currentStatus = intrusion ? "INTRUSION" : "SECURE";
+    
+    // Only push data if status changed OR 1000ms has passed
+    if (currentStatus !== lastReportedStatus || timestamp - lastReportTime > 1000) {
+        let ldrValue = intrusion ? 800 + Math.floor(Math.random() * 150) : 100 + Math.floor(Math.random() * 200);
+        setComponentValue({ldr_value: ldrValue, status: currentStatus});
+        lastReportedStatus = currentStatus;
+        lastReportTime = timestamp;
+    }
+
+    // --- Render Graphics ---
+    ctx.fillStyle = "#228B22";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = "#9ACD32";
+    ctx.fillRect(FENCE_X, FENCE_Y, FENCE_W, FENCE_H);
+    ctx.fillStyle = "#006400";
+    ctx.font = "bold 24px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("Protected Crops", FENCE_X + FENCE_W/2, FENCE_Y + FENCE_H/2);
+
+    ctx.lineWidth = intrusion ? 6 : 3;
+    if (intrusion && Math.floor(timestamp / 100) % 2 === 0) {
+      ctx.strokeStyle = "yellow";
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = "yellow";
+    } else {
+      ctx.strokeStyle = "red";
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = "red";
+    }
+    ctx.strokeRect(FENCE_X, FENCE_Y, FENCE_W, FENCE_H);
+    ctx.shadowBlur = 0;
+
+    ctx.font = "30px sans-serif";
+    for (let a of animals) {
+      if (a.isDragging || a.isPlayer) {
+          ctx.font = "40px sans-serif"; // Highlight player or dragged animal
+      } else {
+          ctx.font = "30px sans-serif";
+      }
+      ctx.fillText(a.emoji, a.x, a.y);
+    }
+
+    if (intrusion) {
+      ctx.fillStyle = "white";
+      ctx.shadowBlur = 5;
+      ctx.shadowColor = "red";
+      ctx.font = "bold 36px sans-serif";
+      ctx.fillText("⚠️ INTRUSION DETECTED ⚠️", canvas.width/2, 40);
+      ctx.shadowBlur = 0;
+    }
+
+    requestAnimationFrame(loop);
+  }
+
+  window.onload = function() {
+    init(); // Tell Streamlit we are ready
+    setFrameHeight(520);
+    requestAnimationFrame(loop);
+  };
+</script>
+</body>
+</html>

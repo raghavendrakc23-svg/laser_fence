@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laser Fencing Security Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <h2>🚨 Laser Fencing</h2>
+            <div class="config-section">
+                <h3>Configuration</h3>
+                <label for="mode-select">Data Source</label>
+                <select id="mode-select">
+                    <option value="Simulator (File)">Simulator (File)</option>
+                    <option value="Embedded Simulation">Embedded Simulation</option>
+                    <option value="Serial Port (Hardware)">Serial Port (Hardware)</option>
+                    <option value="Manual Input">Manual Input</option>
+                </select>
+                
+                <div id="serial-config" class="hidden config-panel">
+                    <label>COM Port</label>
+                    <input type="text" id="serial-port" value="COM3">
+                    <label>Baud Rate</label>
+                    <input type="number" id="baud-rate" value="9600">
+                </div>
+                
+                <div id="manual-config" class="hidden config-panel">
+                    <label>Manual LDR Value</label>
+                    <input type="range" id="manual-slider" min="0" max="1023" value="150">
+                    <span id="manual-val-display">150</span>
+                </div>
+                
+                <button id="reset-btn" class="btn">Reset Intrusion Count</button>
+            </div>
+        </aside>
+        
+        <!-- Main Content -->
+        <main class="main-content">
+            <header>
+                <h1>Security Dashboard</h1>
+                <div class="status-indicator" id="header-status">
+                    <span class="dot"></span>
+                    <span class="text">Connecting...</span>
+                </div>
+            </header>
+            
+            <div class="metrics-grid">
+                <div class="metric-card glass-panel">
+                    <h3>Current LDR Value</h3>
+                    <div class="value" id="ldr-value">--</div>
+                </div>
+                <div class="metric-card glass-panel" id="status-card">
+                    <h3>System Status</h3>
+                    <div class="value" id="status-value">WAITING</div>
+                </div>
+                <div class="metric-card glass-panel">
+                    <h3>Total Intrusions</h3>
+                    <div class="value" id="intrusion-count">0</div>
+                </div>
+            </div>
+            
+            <!-- Embedded Canvas (Hidden by default) -->
+            <div id="canvas-container" class="glass-panel hidden">
+                <h3>Farm Simulation View</h3>
+                <canvas id="farmCanvas" width="800" height="400"></canvas>
+                <p class="hint">Click canvas to enable WASD / Arrow Keys</p>
+            </div>
+            
+            <div class="charts-grid">
+                <div class="chart-container glass-panel">
+                    <h3>LDR Value History</h3>
+                    <div style="position: relative; height: 300px; width: 100%;">
+                        <canvas id="historyChart"></canvas>
+                    </div>
+                </div>
+                
+                <div class="log-container glass-panel">
+                    <h3>Intrusion Log</h3>
+                    <div class="table-wrapper">
+                        <table id="log-table">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>LDR Value</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Rows generated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
