@@ -4,4 +4,3 @@ websockets
 pyserial
 streamlit
 pandas
-pygame
